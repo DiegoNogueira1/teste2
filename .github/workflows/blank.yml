@@ -1,0 +1,116 @@
+<?php
+
+namespace App\Providers;
+
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\ServiceProvider;
+use App\Auth\CustomGuard;
+use Illuminate\Support\Facades\Hash;
+use App\Models\User;
+use Illuminate\Http\Request;
+
+class AuthServiceProvider extends ServiceProvider
+{
+    public function boot()
+    {
+        Auth::extend('custom', function ($app, $name, array $config) {
+            return new CustomGuard();
+        });
+    }
+}
+
+namespace App\Auth;
+
+use Illuminate\Contracts\Auth\Guard;
+use Illuminate\Support\Facades\Hash;
+use App\Models\User;
+use Illuminate\Support\Facades\Session;
+
+class CustomGuard implements Guard
+{
+    protected $user;
+
+    public function check()
+    {
+        return Session::has('user_id');
+    }
+
+    public function user()
+    {
+        if (!$this->user && $this->check()) {
+            $this->user = User::find(Session::get('user_id'));
+        }
+        return $this->user;
+    }
+
+    public function attempt(array $credentials)
+    {
+        $user = User::where('email', $credentials['email'])->first();
+        if ($user && Hash::check($credentials['password'], $user->password)) {
+            Session::put('user_id', $user->id);
+            $this->user = $user;
+            return true;
+        }
+        return false;
+    }
+
+    public function logout()
+    {
+        Session::forget('user_id');
+        $this->user = null;
+    }
+}
+
+namespace App\Http\Controllers;
+
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
+
+class AuthController extends Controller
+{
+    public function showLogin()
+    {
+        return view('auth.login');
+    }
+
+    public function login(Request $request)
+    {
+        $credentials = $request->only('email', 'password');
+        
+        if (Auth::guard('custom')->attempt($credentials)) {
+            return redirect('/dashboard');
+        }
+
+        return back()->withErrors(['email' => 'Credenciais inválidas']);
+    }
+
+    public function logout()
+    {
+        Auth::guard('custom')->logout();
+        return redirect('/login');
+    }
+
+    public function dashboard()
+    {
+        if (!Auth::guard('custom')->check()) {
+            return redirect('/login');
+        }
+        return "Você está logado";
+    }
+}
+
+// Web Routes (routes/web.php)
+use App\Http\Controllers\AuthController;
+
+Route::get('/login', [AuthController::class, 'showLogin'])->name('login');
+Route::post('/login', [AuthController::class, 'login']);
+Route::post('/logout', [AuthController::class, 'logout'])->name('logout');
+Route::get('/dashboard', [AuthController::class, 'dashboard']);
+
+// View (resources/views/auth/login.blade.php)
+<form method="POST" action="{{ route('login') }}">
+    @csrf
+    <input type="email" name="email" required>
+    <input type="password" name="password" required>
+    <button type="submit">Login</button>
+</form>
